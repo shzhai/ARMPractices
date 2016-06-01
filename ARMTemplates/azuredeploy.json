@@ -1,0 +1,464 @@
+﻿{
+    "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+  "parameters": {
+    "dnsname": {
+      "type": "string",
+      "defaultValue": "wdbim",
+      "metadata": {
+        "description": "Connect to your web cluster using dnsName.chinacloudapp.cn"
+      }
+    },
+    "vnetname": {
+      "type": "string",
+      "defaultValue": "bimvnet",
+      "metadata": {
+        "description": "Virtual network name for the cluster"
+      }
+    },
+    "subnetname": {
+      "type": "string",
+      "defaultValue": "bimwebsubnet",
+      "metadata": {
+        "description": "subnet name for the web nodes"
+      }
+    },
+    "vnetaddrprefixes": {
+      "type": "string",
+      "defaultValue": "10.0.0.0/16",
+      "metadata": {
+        "descrpiton": "IP address in CIDR for virtual network"
+      }
+    },
+    "webaddrprefixes": {
+      "type": "string",
+      "defaultValue": "10.0.0.0/24",
+      "metadata": {
+        "description": "IP address in CIDR for web subnet"
+      }
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": {
+        "dept": "storage",
+        "project": "bim"
+      }
+    },
+    "storageAccountName": {
+      "type": "string",
+      "defaultValue": "bimsa",
+      "metadata": {
+        "description": "Storage Account Name from Storage RG"
+      }
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": {
+        "dept": "storage",
+        "project": "bim"
+      }
+    },
+    "vmNamePrefix": {
+      "type": "string",
+      "defaultValue": "bimweb",
+      "metadata": {
+        "description": "host name prefix for the VMs"
+      }
+    },
+    "vmSize": {
+      "type": "string",
+      "defaultValue": "Standard_A1",
+      "metadata": {
+        "description": "size for the VMs"
+      }
+    },
+    "userName": {
+      "type": "string",
+      "defaultValue": "bimadmin",
+      "metadata": {
+        "description": "user name to ssh to the VMs"
+      }
+    },
+    "password": {
+      "type": "securestring",
+      "metadata": {
+        "description": "password to ssh to the VMs"
+      }
+    },
+    "imagePublisher": {
+      "type": "string",
+      "defaultValue": "OpenLogic",
+      "allowedValues": [
+        "OpenLogic",
+        "Canonical"
+      ],
+      "metadata": {
+        "description": "publisher for the VM OS image"
+      }
+    },
+    "imageOffer": {
+      "type": "string",
+      "defaultValue": "CentOS",
+      "allowedValues": [
+        "CentOS",
+        "UbuntuServer"
+      ],
+      "metadata": {
+        "description": "VM OS name"
+      }
+    },
+    "imageSKU": {
+      "type": "string",
+      "defaultValue": "6.5",
+      "allowedValues": [
+        "6.5",
+        "12.04.5-LTS"
+      ],
+      "metadata": {
+        "description": "VM OS version"
+      }
+    },
+    "FrontEndPort": {
+      "type": "int",
+      "defaultValue": 80,
+      "metadata": {
+        "description": "Web public port"
+      }
+    },
+    "BackEndPort": {
+      "type": "int",
+      "defaultValue": 80,
+      "metadata": {
+        "description": "Web private port"
+      }
+    },
+    "idleTimeoutInMinutesforLBRule": {
+      "type": "int",
+      "defaultValue": 5,
+      "metadata": {
+        "description": "idel timeout for load balancer"
+      }
+    },
+    "probePort": {
+      "type": "int",
+      "defaultValue": 80,
+      "metadata": {
+        "description": "cluster health check probe port exposed to load balancer"
+      }
+    },
+    "probeRequestPath": {
+      "type": "string",
+      "defaultValue": "/",
+      "metadata": {
+        "description": "health check probe path"
+      }
+    },
+    "probeIntervalInSeconds": {
+      "type": "int",
+      "defaultValue": 10,
+      "metadata": {
+        "description": "health check probe interval"
+      }
+    },
+    "numberOfProbes": {
+      "type": "int",
+      "defaultValue": 6,
+      "metadata": {
+        "description": "number of health check probes to consider failure"
+      }
+    }
+  },
+  "variables": {
+    "availabilitySetName": "[concat(parameters('vmNamePrefix'),'-AVSet')]",
+    "numberOfInstances": 2,
+    "lbname": "[concat(parameters('vnetname'),'-lb')]",
+    "lbID": "[resourceId('Microsoft.Network/loadBalancers',variables('lbName'))]",
+    "lbPublicIPName": "[concat(variables('lbName'),'-publicIP')]",
+    "lbPublicIPRef": "[resourceId('Microsoft.Network/publicIPAddresses',variables('lbPublicIPName'))]",
+    "lbfrontendName": "[concat(variables('lbname'),'-frontend')]",
+    "lbfrontendIPConfig": "[concat(variables('lbID'),'/frontendIPConfigurations/',variables('lbfrontendName'))]",
+    "lbBackendAddrPoolName": "[concat(variables('lbname'), '-BackendPool')]",
+    "lbBackendAddrPoolID": "[concat(variables('lbID'),'/backendAddressPools/',variables('lbBackendAddrPoolName'))]",
+    "lbProbeID": "[concat(variables('lbID'),'/probes/',variables('probeName'))]",
+    "lbRuleName": "[concat(parameters('vmNamePrefix'),'-lbRule')]",
+    "probeName": "[concat(parameters('vmnamePrefix'),'-probe')]",
+    "nicNamePrefix": "[concat(parameters('vmNamePrefix'),'-nic')]",
+    "vnetID": "[resourceId('Microsoft.Network/virtualNetworks',parameters('vnetName'))]",
+    "subnetRef": "[concat(variables('vnetID'),'/subnets/',parameters ('subnetName'))]",
+    "vhdContainerPrefix": "[concat('http://',parameters('storageAccountName'),'.blob.core.chinacloudapi.cn/')]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2015-05-01-preview",
+      "name": "[parameters('storageAccountName')]",
+      "tags": {
+        "dept": "[parameters('tags').dept]",
+        "project": "[parameters('tags').project]"
+      },
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "accountType": "Standard_LRS"
+      }
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2015-06-15",
+      "name": "[parameters('vnetname')]",
+      "location": "[resourceGroup().location]",
+      "tags": {
+        "dept": "[parameters('tags').dept]",
+        "project": "[parameters('tags').project]"
+      },
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[parameters('vnetaddrprefixes')]"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[parameters('subnetname')]",
+            "properties": {
+              "addressPrefix": "[parameters('webaddrprefixes')]"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Compute/availabilitySets",
+      "name": "[variables('availabilitySetName')]",
+      "apiVersion": "2015-06-15",
+      "location": "[resourceGroup().location]",
+      "tags": {
+        "dept": "[parameters('tags').dept]",
+        "project": "[parameters('tags').project]"
+      },
+      "properties": { }
+    },
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "apiVersion": "2015-06-15",
+      "name": "[variables('lbPublicIPName')]",
+      "location": "[resourceGroup().location]",
+      "tags": {
+        "dept": "[parameters('tags').dept]",
+        "project": "[parameters('tags').project]"
+      },
+      "properties": {
+        "publicIPAllocationMethod": "Dynamic",
+        "dnsSettings": {
+          "domainNameLabel": "[parameters('dnsname')]"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Network/loadBalancers",
+      "apiVersion": "2015-06-15",
+      "name": "[variables('lbName')]",
+      "location": "[resourceGroup().location]",
+      "tags": {
+        "dept": "[parameters('tags').dept]",
+        "project": "[parameters('tags').project]"
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/publicIPAddresses/',variables('lbPublicIPName'))]"
+      ],
+      "properties": {
+        "frontendIPConfigurations": [
+          {
+            "name": "[variables('lbfrontendName')]",
+            "properties": {
+              "publicIPAddress": {
+                "id": "[variables('lbPublicIPRef')]"
+              }
+            }
+          }
+        ],
+        "backendAddressPools": [
+          {
+            "name": "[variables('lbBackendAddrPoolName')]"
+          }
+        ],
+        "loadBalancingRules": [
+          {
+            "name": "[variables('lbRuleName')]",
+            "properties": {
+              "frontendIPConfiguration": {
+                "id": "[variables('lbfrontendIPConfig')]"
+              },
+              "backendAddressPool": {
+                "id": "[variables('lbBackendAddrPoolID')]"
+              },
+              "protocol": "Tcp",
+              "frontendPort": "[parameters('FrontEndPort')]",
+              "backendPort": "[parameters('BackEndPort')]",
+              "enableFloatingIP": false,
+              "idleTimeoutInMinutes": "[parameters('idleTimeoutInMinutesforLBRule')]",
+              "probe": {
+                "id": "[variables('lbProbeID')]"
+              }
+            }
+          }
+        ],
+        "probes": [
+          {
+            "name": "[variables('probeName')]",
+            "properties": {
+              "protocol": "Http",
+              "port": "[parameters('probePort')]",
+              "intervalInSeconds": "[parameters('probeIntervalInSeconds')]",
+              "numberOfProbes": "[parameters('numberOfProbes')]",
+              "requestPath": "[parameters('probeRequestPath')]"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Network/loadBalancers/inboundNatRules",
+      "copy": {
+        "name": "sshNatLoop",
+        "count": "[variables('numberOfInstances')]"
+      },
+      "name": "[concat(variables('lbname'),'/','SSH-VM',copyIndex(1))]",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[concat('Microsoft.Network/loadBalancers/',variables('lbName'))]"
+      ],
+      "properties": {
+        "frontendIPConfiguration": {
+          "id": "[variables('lbfrontendIPConfig')]"
+        },
+        "protocol": "tcp",
+        "frontendPort": "[add(50020, copyIndex(1))]",
+        "backendPort": 22,
+        "enableFloatingIP": false
+      }
+    },
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "apiVersion": "2015-06-15",
+      "location": "[resourceGroup().location]",
+      "copy": {
+        "name": "nicLoop",
+        "count": "[variables('numberOfInstances')]"
+      },
+      "name": "[concat(variables('nicNamePrefix'),'-',copyindex(1))]",
+      "dependsOn": [
+        "[concat('Microsoft.Network/virtualNetworks/',parameters('vnetName'))]",
+        "[concat('Microsoft.Network/loadBalancers/',variables('lbName'))]",
+        "[concat('Microsoft.Network/loadBalancers/', variables('lbName'), '/inboundNatRules/', 'SSH-VM', copyIndex(1))]"
+      ],
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": {
+                "id": "[variables('subnetRef')]"
+              },
+              "loadBalancerBackendAddressPools": [
+                {
+                  "id": "[variables('lbBackendAddrPoolID')]"
+                }
+              ],
+              "loadBalancerInboundNatRules": [
+                {
+                  "id": "[concat(variables('lbID'),'/inboundNatRules/SSH-VM',copyIndex(1))]"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachines",
+      "apiVersion": "2015-06-15",
+      "location": "[resourceGroup().location]",
+      "copy": {
+        "name": "virtualMachineLoop",
+        "count": "[variables('numberOfInstances')]"
+      },
+      "name": "[concat(parameters('vmNamePrefix'),copyIndex(1))]",
+      "tags": {
+        "dept": "[parameters('tags').dept]",
+        "project": "[parameters('tags').project]"
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Storage/storageAccounts/', parameters('storageAccountName'))]",
+        "[concat('Microsoft.Network/networkInterfaces/', variables('nicNamePrefix'),'-',copyindex(1))]",
+        "[concat('Microsoft.Compute/availabilitySets/', variables('availabilitySetName'))]"
+      ],
+      "properties": {
+        "availabilitySet": {
+          "id": "[resourceId('Microsoft.Compute/availabilitySets', variables('availabilitySetName'))]"
+        },
+        "hardwareProfile": {
+          "vmSize": "[parameters('vmSize')]"
+        },
+        "osProfile": {
+          "computername": "[concat(parameters('vmNamePrefix'),copyIndex(1))]",
+          "adminUsername": "[parameters('userName')]",
+          "adminPassword": "[parameters('password')]"
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "[parameters('imagePublisher')]",
+            "offer": "[parameters('imageOffer')]",
+            "sku": "[parameters('imageSKU')]",
+            "version": "latest"
+          },
+          "dataDisks": [
+            {
+              "name": "datadisk1",
+              "diskSizeGB": "10",
+              "lun": 0,
+              "vhd": {
+                "Uri": "[concat(variables('vhdContainerPrefix'),'dvhd',copyIndex(1),'/','dataDisk1.vhd')]"
+              },
+              "createOption": "Empty"
+            },
+            {
+              "name": "datadisk2",
+              "diskSizeGB": "10",
+              "lun": 1,
+              "vhd": {
+                "Uri": "[concat(variables('vhdContainerPrefix'),'dvhd',copyIndex(1),'/','dataDisk2.vhd')]"
+              },
+              "createOption": "Empty"
+            }
+          ],
+          "osDisk": {
+            "name": "osdisk",
+            "vhd": {
+              "uri": "[concat(variables('vhdContainerPrefix'),'osvhd',copyIndex(1),'/','osdisk.vhd')]"
+            },
+            "caching": "ReadWrite",
+            "createOption": "FromImage"
+          }
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces',concat(variables('nicNamePrefix'),'-',copyindex(1)))]"
+            }
+          ]
+        },
+        "diagnosticsProfile": {
+          "bootDiagnostics": {
+            "enabled": "true",
+            "storageUri": "[concat('http://',parameters('storageAccountName'),'.blob.core.chinacloudapi.cn')]"
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+
+  }
+}
